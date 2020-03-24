@@ -121,27 +121,30 @@ object FiberSpec extends ZIOBaseSpec {
       }
     ) @@ sequential,
     suite("prettyPrint improvements")(
-      testM("fiber with one child") {
-        for {
-          fiberRef <- FiberRef.make(0, math.max)
-          child    <- fiberRef.update(_ + 1).fork
-          dump     <- Fiber.dumpStr(child)
-          childId  <- child.id
-          _        <- child.join
-        } yield {
-          assert(dump.contains(s"+---#${childId.seqNumber} Status: Done"))(equalTo(true))
-        }
-      },
       testM("fiber with multiple children") {
+        def dumpFiber(ref: Promise[Nothing, Fiber.Runtime[_, _]]) =
+          for {
+            fib  <- ref.await
+            dump <- Fiber.dumpStr(fib)
+          } yield {
+            dump
+          }
+
         for {
-          parent   <- (ZIO.infinity.forkAs("child2") *> ZIO.infinity).forkAs("child1")
-          childId  <- parent.id
-          childSeq = childId.seqNumber
-          children <- parent.children
-          dumpStr  <- Fiber.dumpStr(parent)
+          parentPr <- Promise.make[Nothing, Fiber.Runtime[_, _]]
+          fib <- dumpFiber(parentPr)
+                  .forkAs("child2")
+                  .flatMap(_.join)
+                  .forkAs("child1")
+                  .flatMap(_.join)
+                  .forkAs("parent")
+
+          _       <- parentPr.succeed(fib)
+          dumpStr <- fib.join
         } yield {
-          assert(dumpStr.contains(s"#${childSeq} Status"))(equalTo(true))
-          assert(children.size)(equalTo(1))
+          assert(dumpStr.contains("+---\"parent\" #"))(equalTo(true)) &&
+          assert(dumpStr.contains("|   +---\"child1\" #"))(equalTo(true)) &&
+          assert(dumpStr.contains("|   |   +---\"child2\" #"))(equalTo(true))
         }
       }
     )
